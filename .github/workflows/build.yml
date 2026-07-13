@@ -1,1 +1,60 @@
+name: Build Modern GKI 6.12 NetHunter Kernel
+on:
+  workflow_dispatch:
 
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize Disk Space
+        uses: easimon/minimize-disk-space@v1
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex glibc-source libelf-dev libssl-dev libncurses-dev python3-pip git-core repo
+
+      - name: Initialize GKI 6.12 Tree
+        run: |
+          mkdir gki-kernel && cd gki-kernel
+          repo init -u https://android.googlesource.com/kernel/manifest -b android16-6.12 --depth=1
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+
+      - name: Inject KernelSU & NetHunter Configurations
+        run: |
+          cd gki-kernel/common
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          echo "CONFIG_USB_F_HID=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_USB_CONFIGFS_F_HID=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CFG80211=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_MAC80211=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WLAN_VENDOR_ATH=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ATH9K_HTC=m" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_WLAN_VENDOR_RTL=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_RTL8187=m" >> arch/arm64/configs/gki_defconfig
+
+      - name: Compile via Kleaf Build Engine
+        run: |
+          cd gki-kernel
+          tools/bazel build //common:kernel_aarch64_dist
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          cp ../gki-kernel/bazel-bin/common/kernel_aarch64_dist/Image .
+          zip -r9 ../NetHunter-GKI-6.12-Kernel.zip *
+
+      - name: Upload Flashable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetHunter-GKI-Kernel-ZIP
+          path: NetHunter-GKI-6.12-Kernel.zip
+          
